@@ -1,6 +1,6 @@
 # @solusyon/metrics
 
-Biblioteca TypeScript para coleta simples de métricas.
+Biblioteca TypeScript para rastreamento de execução com traceId, tempo de execução e captura de erros.
 
 ## Instalação
 
@@ -8,24 +8,116 @@ Biblioteca TypeScript para coleta simples de métricas.
 npm install @solusyon/metrics
 ```
 
-## Uso
+## API disponível
+
+- `startTrackingMetrics(traceId, fn, sampleRate?)`
+- `getTraceId()`
+- `setMetricsLogger(loggerBuilder)`
+- `measureFunctionWrapper(fn, name?)`
+- `measureObjectWrapper(obj, name)`
+- `MeasureClass()`
+
+## Exemplo 1: função isolada
 
 ```ts
-import { createCounter } from "@solusyon/metrics";
+import {
+  getTraceId,
+  measureFunctionWrapper,
+  startTrackingMetrics,
+} from "@solusyon/metrics";
 
-const requests = createCounter("http.requests", { service: "api" });
+const chargePayment = measureFunctionWrapper(async (orderId: string) => {
+  const traceId = getTraceId();
+  return { orderId, status: "paid", traceId };
+}, "chargePayment");
 
-requests.inc();
-requests.inc(5);
+const result = await startTrackingMetrics(
+  "req-123",
+  async () => {
+    return chargePayment("order-1");
+  },
+  1,
+);
 
-console.log(requests.snapshot());
+console.log(result);
 ```
+
+## Exemplo 2: objeto com múltiplos métodos
+
+```ts
+import { measureObjectWrapper, startTrackingMetrics } from "@solusyon/metrics";
+
+const repository = {
+  async findUser(id: string) {
+    return { id, name: "Anderson" };
+  },
+  async updateUser(id: string, name: string) {
+    return { id, name };
+  },
+};
+
+const trackedRepository = measureObjectWrapper(repository, "UserRepository");
+
+await startTrackingMetrics(
+  "req-456",
+  async () => {
+    const user = await trackedRepository.findUser("u-1");
+    await trackedRepository.updateUser(user.id, "Novo Nome");
+  },
+  1,
+);
+```
+
+## Exemplo 3: classe com decorator
+
+```ts
+import { MeasureClass, startTrackingMetrics } from "@solusyon/metrics";
+
+class CheckoutService {
+  async createOrder() {
+    return { id: "ord-1", status: "created" };
+  }
+}
+
+MeasureClass()(CheckoutService);
+
+const service = new CheckoutService();
+
+await startTrackingMetrics(
+  "req-789",
+  async () => {
+    await service.createOrder();
+  },
+  1,
+);
+```
+
+## Exemplo 4: logger customizado
+
+```ts
+import { setMetricsLogger } from "@solusyon/metrics";
+
+setMetricsLogger((format) => {
+  return (data) => {
+    const message = format(data);
+    // envie para Datadog, OpenSearch, CloudWatch, etc.
+    console.log(JSON.stringify({ level: "debug", message }));
+  };
+});
+```
+
+## Como funciona o sampling
+
+- `sampleRate` varia de `0` a `1` e eh limitado internamente para o intervalo `0.001` a `1`.
+- Se `sampleRate` nao for informado, a lib usa a variavel de ambiente `METRICS_SAMPLE_RATE`.
+- Se a variavel nao existir, o padrao atual eh `0.91`.
 
 ## Scripts
 
 - `npm run build`: gera artefatos em `dist/`
 - `npm run check`: valida tipos sem gerar build
 - `npm test`: executa a suíte de testes
+- `npm run test:watch`: executa testes em modo watch
 
 ## Publicação no npm
 
