@@ -1,6 +1,6 @@
 {
   "name": "@solusyon/metrics",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Metrics library for Node.js APIs.",
   "keywords": [
     "metrics",
