@@ -51,6 +51,15 @@ let currentLogger: LoggerFn = (loggerData) => {
   console.debug(logFormat(loggerData));
 };
 
+function isPromiseLike<T = unknown>(value: unknown): value is Promise<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 export function setMetricsLogger(
   loggerBuilder: (formatter: typeof logFormat) => LoggerFn,
 ): void {
@@ -99,7 +108,7 @@ export function MeasureClass() {
         typeof descriptor.value === "function"
       ) {
         const originalMethod = descriptor.value;
-        descriptor.value = async function (...args: unknown[]) {
+        descriptor.value = function (...args: unknown[]) {
           const context = storage.getStore();
           if (!context) return originalMethod.apply(this, args);
 
@@ -108,10 +117,21 @@ export function MeasureClass() {
             ? `${context.parentPath}.${myOrder}`
             : `${myOrder}`;
           const start = performance.now();
-          let capturedError: unknown = null;
+          const logMetric = (error: unknown | null = null) => {
+            if (context.shouldLog || error) {
+              currentLogger({
+                traceId: context.traceId,
+                target,
+                propertyName,
+                durationMS: performance.now() - start,
+                depthString: myId,
+                error,
+              });
+            }
+          };
 
           try {
-            return await storage.run(
+            const result = storage.run(
               {
                 traceId: context.traceId,
                 parentPath: myId,
@@ -120,20 +140,24 @@ export function MeasureClass() {
               },
               () => originalMethod.apply(this, args),
             );
-          } catch (error) {
-            capturedError = error;
-            throw error;
-          } finally {
-            if (context.shouldLog || capturedError) {
-              currentLogger({
-                traceId: context.traceId,
-                target,
-                propertyName,
-                durationMS: performance.now() - start,
-                depthString: myId,
-                error: capturedError,
-              });
+
+            if (isPromiseLike(result)) {
+              return result
+                .then((value) => {
+                  logMetric(null);
+                  return value;
+                })
+                .catch((error) => {
+                  logMetric(error);
+                  throw error;
+                });
             }
+
+            logMetric(null);
+            return result;
+          } catch (error) {
+            logMetric(error);
+            throw error;
           }
         };
         Object.defineProperty(target.prototype, propertyName, descriptor);
@@ -148,7 +172,7 @@ export function MeasureClass() {
 export function measureFunctionWrapper<
   T extends (...args: unknown[]) => unknown,
 >(fn: T, name?: string): T {
-  return async function (this: unknown, ...args: unknown[]) {
+  return function (this: unknown, ...args: unknown[]) {
     const context = storage.getStore();
     if (!context) return fn.apply(this, args);
 
@@ -157,10 +181,21 @@ export function measureFunctionWrapper<
       ? `${context.parentPath}.${myOrder}`
       : `${myOrder}`;
     const start = performance.now();
-    let capturedError: unknown = null;
+    const logMetric = (error: unknown | null = null) => {
+      if (context.shouldLog || error) {
+        currentLogger({
+          traceId: context.traceId,
+          target: { name: "Function" } as unknown as Function,
+          propertyName: name || fn.name || "Anonymous",
+          durationMS: performance.now() - start,
+          depthString: myId,
+          error,
+        });
+      }
+    };
 
     try {
-      return await storage.run(
+      const result = storage.run(
         {
           traceId: context.traceId,
           parentPath: myId,
@@ -169,20 +204,24 @@ export function measureFunctionWrapper<
         },
         () => fn.apply(this, args),
       );
-    } catch (error) {
-      capturedError = error;
-      throw error;
-    } finally {
-      if (context.shouldLog || capturedError) {
-        currentLogger({
-          traceId: context.traceId,
-          target: { name: "Function" } as unknown as Function,
-          propertyName: name || fn.name || "Anonymous",
-          durationMS: performance.now() - start,
-          depthString: myId,
-          error: capturedError,
-        });
+
+      if (isPromiseLike(result)) {
+        return result
+          .then((value) => {
+            logMetric(null);
+            return value;
+          })
+          .catch((error) => {
+            logMetric(error);
+            throw error;
+          });
       }
+
+      logMetric(null);
+      return result;
+    } catch (error) {
+      logMetric(error);
+      throw error;
     }
   } as unknown as T;
 }
@@ -198,7 +237,7 @@ export function measureObjectWrapper<T extends object>(
     get(target: any, prop: string | symbol, receiver: unknown) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value === "function") {
-        return async function (this: unknown, ...args: unknown[]) {
+        return function (this: unknown, ...args: unknown[]) {
           const context = storage.getStore();
           const originalWithContext = value.bind(receiver);
           if (!context) return originalWithContext(...args);
@@ -208,10 +247,21 @@ export function measureObjectWrapper<T extends object>(
             ? `${context.parentPath}.${myOrder}`
             : `${myOrder}`;
           const start = performance.now();
-          let capturedError: unknown = null;
+          const logMetric = (error: unknown | null = null) => {
+            if (context.shouldLog || error) {
+              currentLogger({
+                traceId: context.traceId,
+                target: { name } as unknown as Function,
+                propertyName: String(prop),
+                durationMS: performance.now() - start,
+                depthString: myId,
+                error,
+              });
+            }
+          };
 
           try {
-            return await storage.run(
+            const result = storage.run(
               {
                 traceId: context.traceId,
                 parentPath: myId,
@@ -220,20 +270,24 @@ export function measureObjectWrapper<T extends object>(
               },
               () => originalWithContext(...args),
             );
-          } catch (error) {
-            capturedError = error;
-            throw error;
-          } finally {
-            if (context.shouldLog || capturedError) {
-              currentLogger({
-                traceId: context.traceId,
-                target: { name } as unknown as Function,
-                propertyName: String(prop),
-                durationMS: performance.now() - start,
-                depthString: myId,
-                error: capturedError,
-              });
+
+            if (isPromiseLike(result)) {
+              return result
+                .then((resolvedValue) => {
+                  logMetric(null);
+                  return resolvedValue;
+                })
+                .catch((error) => {
+                  logMetric(error);
+                  throw error;
+                });
             }
+
+            logMetric(null);
+            return result;
+          } catch (error) {
+            logMetric(error);
+            throw error;
           }
         };
       }
