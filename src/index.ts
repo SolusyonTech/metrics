@@ -23,13 +23,13 @@ interface MetricsLoggerData {
 const storage = new AsyncLocalStorage<MetricsContext>();
 
 const DEFAULT_SAMPLE_RATE = Number.parseFloat(
-  process.env.METRICS_SAMPLE_RATE || "0.91",
+  process.env.METRICS_SAMPLE_RATE || "1",
 );
 
 export type LoggerFn = (loggerData: MetricsLoggerData) => void;
 
 /**
- * Formata o log com recuo visual e sinalização de erro (ex: ❌)
+ * Formats the log with visual indent and error signalization (e.g., ❌)
  */
 const logFormat = ({
   traceId,
@@ -44,7 +44,7 @@ const logFormat = ({
   const prefix = level === 0 ? "─" : "└";
   const statusIcon = error ? "❌" : "✅";
 
-  return `[${traceId}] ${indent}${prefix}─ (${depthString}) ${statusIcon} ${target.name}.${propertyName}: ${durationMS.toFixed(2)}ms${error ? ` (Erro: ${error instanceof Error ? error.message : error})` : ""}`;
+  return `[${traceId}] ${indent}${prefix}─ (${depthString}) ${statusIcon} ${target.name}.${propertyName}: ${durationMS.toFixed(2)}ms${error ? ` (Error: ${error instanceof Error ? error.message : error})` : ""}`;
 };
 
 let currentLogger: LoggerFn = (loggerData) => {
@@ -58,9 +58,9 @@ export function setMetricsLogger(
 }
 
 /**
- * @param traceId ID da requisição
- * @param fn Função a executar
- * @param sampleRate Opcional: sobrescreve a ENV ou o padrão de 0.1
+ * @param traceId Request ID
+ * @param fn Function to execute
+ * @param sampleRate Optional: overrides the ENV or default of 0.1
  */
 export function startTrackingMetrics<T>(
   traceId: string | undefined,
@@ -83,7 +83,7 @@ export function getTraceId(): string | undefined {
 }
 
 /**
- * Decorador de Classe: Ajustado com try/catch para logar erros
+ * Class Decorator: Adjusted with try/catch for error logging
  */
 export function MeasureClass() {
   return (target: Function) => {
@@ -143,7 +143,7 @@ export function MeasureClass() {
 }
 
 /**
- * Wrapper para Funções Isoladas: Ajustado com try/catch para logar erros
+ * Wrapper for Isolated Functions: Adjusted with try/catch for error logging
  */
 export function measureFunctionWrapper<
   T extends (...args: unknown[]) => unknown,
@@ -188,7 +188,7 @@ export function measureFunctionWrapper<
 }
 
 /**
- * Proxy para Objetos Literais: Ajustado com try/catch para logar erros
+ * Proxy for Literal Objects: Adjusted with try/catch for error logging
  */
 export function measureObjectWrapper<T extends object>(
   obj: T,

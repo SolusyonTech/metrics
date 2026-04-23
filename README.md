@@ -1,14 +1,18 @@
 # @solusyon/metrics
 
-Biblioteca TypeScript para rastreamento de execução com traceId, tempo de execução e captura de erros.
+TypeScript library for execution tracking with traceId, execution time, and error capture.
 
-## Instalação
+## Runtime requirements
+
+- Node.js `20` or higher
+
+## Installation
 
 ```bash
 npm install @solusyon/metrics
 ```
 
-## API disponível
+## Available API
 
 - `startTrackingMetrics(traceId, fn, sampleRate?)`
 - `getTraceId()`
@@ -17,7 +21,7 @@ npm install @solusyon/metrics
 - `measureObjectWrapper(obj, name)`
 - `MeasureClass()`
 
-## Exemplo 1: função isolada
+## Example 1: isolated function
 
 ```ts
 import {
@@ -42,7 +46,7 @@ const result = await startTrackingMetrics(
 console.log(result);
 ```
 
-## Exemplo 2: objeto com múltiplos métodos
+## Example 2: object with multiple methods
 
 ```ts
 import { measureObjectWrapper, startTrackingMetrics } from "@solusyon/metrics";
@@ -62,13 +66,13 @@ await startTrackingMetrics(
   "req-456",
   async () => {
     const user = await trackedRepository.findUser("u-1");
-    await trackedRepository.updateUser(user.id, "Novo Nome");
+    await trackedRepository.updateUser(user.id, "New Name");
   },
   1,
 );
 ```
 
-## Exemplo 3: classe com decorator
+## Example 3: class with decorator
 
 ```ts
 import { MeasureClass, startTrackingMetrics } from "@solusyon/metrics";
@@ -92,7 +96,7 @@ await startTrackingMetrics(
 );
 ```
 
-## Exemplo 4: logger customizado
+## Example 4: custom logger
 
 ```ts
 import { setMetricsLogger } from "@solusyon/metrics";
@@ -100,46 +104,46 @@ import { setMetricsLogger } from "@solusyon/metrics";
 setMetricsLogger((format) => {
   return (data) => {
     const message = format(data);
-    // envie para Datadog, OpenSearch, CloudWatch, etc.
+    // send to Datadog, OpenSearch, CloudWatch, etc.
     console.log(JSON.stringify({ level: "debug", message }));
   };
 });
 ```
 
-## Como funciona o sampling
+## How sampling works
 
-- `sampleRate` varia de `0` a `1` e eh limitado internamente para o intervalo `0.001` a `1`.
-- Se `sampleRate` nao for informado, a lib usa a variavel de ambiente `METRICS_SAMPLE_RATE`.
-- Se a variavel nao existir, o padrao atual eh `0.91`.
+- `sampleRate` ranges from `0` to `1` and is internally limited to the range `0.001` to `1`.
+- If `sampleRate` is not provided, the library uses the `METRICS_SAMPLE_RATE` environment variable.
+- If the variable does not exist, the current default is `0.91`.
 
 ## Scripts
 
-- `npm run build`: gera artefatos em `dist/`
-- `npm run check`: valida tipos sem gerar build
-- `npm test`: executa a suíte de testes
-- `npm run test:watch`: executa testes em modo watch
+- `npm run build`: generates artifacts in `dist/`
+- `npm run check`: validates types without generating build
+- `npm test`: runs the test suite
+- `npm run test:watch`: runs tests in watch mode
 
-## Publicação no npm
+## Publishing to npm
 
-1. Faça login: `npm login`
-2. Atualize versão: `npm version patch` (ou `minor`/`major`)
-3. Publique: `npm publish --access public`
+1. Log in: `npm login`
+2. Update version: `npm version patch` (or `minor`/`major`)
+3. Publish: `npm publish --access public`
 
 ## Pipeline (GitHub Actions)
 
-- Em `pull_request` e `push` para `main`: roda `npm ci`, `npm run check`, `npm run build` e `npm pack --dry-run`.
-- Em `push` de tag `v*` (ex.: `v0.1.1`): além da validação, publica no npm.
+- On `pull_request` and `push` to `main`: runs `npm ci`, `npm run check`, `npm run build`, and `npm pack --dry-run`.
+- On `push` of tag `v*` (e.g., `v0.1.1`): in addition to validation, publishes to npm.
 
-### Configuração necessária
+### Required Configuration
 
-1. Crie o secret `NPM_TOKEN` no repositório GitHub com um token do npm com permissão de publicação.
-2. Gere uma tag semântica e envie para o remoto:
+1. Create the `NPM_TOKEN` secret in the GitHub repository with an npm token with publishing permission.
+2. Generate a semantic tag and push to remote:
 
 ```bash
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-## Importante sobre nome do pacote
+## Important about package name
 
-O npm exige nomes de pacote em minúsculas. Por isso, o nome foi definido como `@solusyon/metrics`.
+npm requires package names in lowercase. Therefore, the name was defined as `@solusyon/metrics`.

@@ -28,7 +28,7 @@ describe("metrics", () => {
     });
   });
 
-  it("deve manter o traceId informado no contexto", async () => {
+  it("should keep the reported traceId in context", async () => {
     const wrapped = measureFunctionWrapper(
       async (value: number) => value + 1,
       "sum",
@@ -52,22 +52,22 @@ describe("metrics", () => {
     expect(logs[0].error).toBeNull();
   });
 
-  it("deve gerar traceId quando nao informado", () => {
+  it("should generate traceId when not provided", () => {
     const traceId = startTrackingMetrics(undefined, () => getTraceId(), 1);
 
     expect(traceId).toBeTypeOf("string");
     expect(traceId).toBeTruthy();
   });
 
-  it("deve logar erro no wrapper de funcao", async () => {
+  it("should log error in function wrapper", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.9);
     const wrapped = measureFunctionWrapper(async () => {
-      throw new Error("falha esperada");
+      throw new Error("expected failure");
     }, "explode");
 
     await expect(
       startTrackingMetrics("trace-error", async () => wrapped(), 0),
-    ).rejects.toThrow("falha esperada");
+    ).rejects.toThrow("expected failure");
 
     expect(logs).toHaveLength(1);
     expect(logs[0].traceId).toBe("trace-error");
@@ -77,7 +77,7 @@ describe("metrics", () => {
     randomSpy.mockRestore();
   });
 
-  it("deve medir metodos de classe com decorator", async () => {
+  it("should measure class methods with decorator", async () => {
     class SampleService {
       async execute(): Promise<string> {
         return "ok";
@@ -100,7 +100,7 @@ describe("metrics", () => {
     expect(logs[0].target.name).toBe("SampleService");
   });
 
-  it("deve medir metodos de objeto com proxy", async () => {
+  it("should measure object methods with proxy", async () => {
     const source = {
       async ping(value: number): Promise<number> {
         return value * 2;
