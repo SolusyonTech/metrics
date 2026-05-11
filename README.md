@@ -14,8 +14,11 @@ npm install @solusyon/metrics
 
 ## Available API
 
-- `startTrackingMetrics(config, fn)`
+- `startTracking(config, fn)`
+- `startTrackingMetrics(traceId, fn, sampleRate?)` - deprecated compatibility alias
 - `getTraceId()`
+- `getMetadata()`
+- `addMetadata(entries)`
 - `setMetricsLogger(loggerBuilder)`
 - `measureFunctionWrapper(fn, name?)`
 - `measureObjectWrapper(obj, name)`
@@ -27,7 +30,7 @@ npm install @solusyon/metrics
 import {
   getTraceId,
   measureFunctionWrapper,
-  startTrackingMetrics,
+  startTracking,
 } from "@solusyon/metrics";
 
 const chargePayment = measureFunctionWrapper(async (orderId: string) => {
@@ -35,7 +38,7 @@ const chargePayment = measureFunctionWrapper(async (orderId: string) => {
   return { orderId, status: "paid", traceId };
 }, "chargePayment");
 
-const result = await startTrackingMetrics(
+const result = await startTracking(
   { traceId: "req-123", sampleRate: 1 },
   async () => {
     return chargePayment("order-1");
@@ -48,7 +51,7 @@ console.log(result);
 ## Example 2: object with multiple methods
 
 ```ts
-import { measureObjectWrapper, startTrackingMetrics } from "@solusyon/metrics";
+import { measureObjectWrapper, startTracking } from "@solusyon/metrics";
 
 const repository = {
   async findUser(id: string) {
@@ -61,7 +64,7 @@ const repository = {
 
 const trackedRepository = measureObjectWrapper(repository, "UserRepository");
 
-await startTrackingMetrics({ traceId: "req-456", sampleRate: 1 }, async () => {
+await startTracking({ traceId: "req-456", sampleRate: 1 }, async () => {
   const user = await trackedRepository.findUser("u-1");
   await trackedRepository.updateUser(user.id, "New Name");
 });
@@ -70,7 +73,7 @@ await startTrackingMetrics({ traceId: "req-456", sampleRate: 1 }, async () => {
 ## Example 3: class with decorator
 
 ```ts
-import { MeasureClass, startTrackingMetrics } from "@solusyon/metrics";
+import { MeasureClass, startTracking } from "@solusyon/metrics";
 
 class CheckoutService {
   async createOrder() {
@@ -82,12 +85,37 @@ MeasureClass()(CheckoutService);
 
 const service = new CheckoutService();
 
-await startTrackingMetrics({ traceId: "req-789", sampleRate: 1 }, async () => {
+await startTracking({ traceId: "req-789", sampleRate: 1 }, async () => {
   await service.createOrder();
 });
 ```
 
-## Example 4: custom logger
+## Example 4: with metadata
+
+```ts
+import {
+  addMetadata,
+  getMetadata,
+  measureFunctionWrapper,
+  startTracking,
+} from "@solusyon/metrics";
+
+const processPayment = measureFunctionWrapper(async (amount: number) => {
+  const metadata = getMetadata();
+  return { amount, userId: metadata?.userId };
+}, "processPayment");
+
+await startTracking(
+  { traceId: "req-111", sampleRate: 1, metadata: { userId: "user-42" } },
+  async () => {
+    addMetadata({ environment: "production" });
+    const result = await processPayment(100);
+    console.log(result);
+  },
+);
+```
+
+## Example 5: custom logger
 
 ```ts
 import { setMetricsLogger } from "@solusyon/metrics";
@@ -105,7 +133,8 @@ setMetricsLogger((format) => {
 
 - `sampleRate` ranges from `0` to `1` and is internally limited to the range `0.001` to `1`.
 - If `sampleRate` is not provided, the library uses the `METRICS_SAMPLE_RATE` environment variable.
-- If the variable does not exist, the current default is `0.91`.
+- If the variable does not exist, the current default is `1`.
+- If `traceId` is omitted in `startTracking`, the library generates one with `randomUUID()`.
 
 ## Scripts
 

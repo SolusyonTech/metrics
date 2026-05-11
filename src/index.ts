@@ -66,7 +66,7 @@ const logFormat = ({
 };
 
 let currentLogger: LoggerFn = (loggerData) => {
-  console.debug(logFormat(loggerData));
+  console.debug(logFormat(loggerData), loggerData.metadata);
 };
 
 function isPromiseLike<T = unknown>(value: unknown): value is Promise<T> {
@@ -130,6 +130,10 @@ export function addMetadata(entries: Record<string, unknown>): void {
   const context = storage.getStore();
   if (!context) return;
   context.metadata = { ...context.metadata, ...entries };
+}
+
+export function getMetadata(): Record<string, unknown> | undefined {
+  return storage.getStore()?.metadata;
 }
 
 /**
