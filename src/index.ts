@@ -9,6 +9,7 @@ interface MetricsContext {
   parentPath: string;
   childCounter: number;
   shouldLog: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 interface MetricsLoggerData {
@@ -18,6 +19,7 @@ interface MetricsLoggerData {
   durationMS: number;
   depthString: string;
   error?: unknown;
+  metadata?: Record<string, unknown>;
 }
 
 const storage = new AsyncLocalStorage<MetricsContext>();
@@ -27,6 +29,22 @@ const DEFAULT_SAMPLE_RATE = Number.parseFloat(
 );
 
 export type LoggerFn = (loggerData: MetricsLoggerData) => void;
+
+export interface StartTrackingMetricsConfig {
+  /**
+   * Request trace identifier propagated to all metric logs in the execution context.
+   * If not provided, a random UUID will be generated.
+   */
+  traceId?: string;
+  /**
+   * Sampling rate from 0 to 1. Values are clamped internally to 0.001..1.
+   */
+  sampleRate?: number;
+  /**
+   * Additional key-value metadata propagated to all metric logs in this trace.
+   */
+  metadata?: Record<string, unknown>;
+}
 
 /**
  * Formats the log with visual indent and error signalization (e.g., ❌)
@@ -40,7 +58,7 @@ const logFormat = ({
   error,
 }: MetricsLoggerData) => {
   const level = (depthString.match(/\./g) || []).length;
-  const indent = "  ".repeat(level);
+  const indent = "\u00A0".repeat(level);
   const prefix = level === 0 ? "─" : "└";
   const statusIcon = error ? "❌" : "✅";
 
@@ -67,9 +85,26 @@ export function setMetricsLogger(
 }
 
 /**
- * @param traceId Request ID
+ * @param config Tracking configuration
  * @param fn Function to execute
- * @param sampleRate Optional: overrides the ENV or default of 0.1
+ */
+export function startTracking<T>(
+  config: StartTrackingMetricsConfig,
+  fn: () => T,
+): T {
+  const { traceId = randomUUID(), sampleRate, metadata } = config;
+  const finalRate = sampleRate ?? DEFAULT_SAMPLE_RATE;
+  const sanitizedRate = Math.max(0.001, Math.min(1, finalRate));
+  const shouldLog = Math.random() <= sanitizedRate;
+
+  return storage.run(
+    { traceId, parentPath: "", childCounter: 0, shouldLog, metadata },
+    fn,
+  );
+}
+
+/**
+ * @deprecated Use `startTracking` instead.
  */
 export function startTrackingMetrics<T>(
   traceId: string | undefined,
@@ -89,6 +124,12 @@ export function startTrackingMetrics<T>(
 
 export function getTraceId(): string | undefined {
   return storage.getStore()?.traceId;
+}
+
+export function addMetadata(entries: Record<string, unknown>): void {
+  const context = storage.getStore();
+  if (!context) return;
+  context.metadata = { ...context.metadata, ...entries };
 }
 
 /**
@@ -126,6 +167,7 @@ export function MeasureClass() {
                 durationMS: performance.now() - start,
                 depthString: myId,
                 error,
+                metadata: context.metadata,
               });
             }
           };
@@ -137,6 +179,7 @@ export function MeasureClass() {
                 parentPath: myId,
                 childCounter: 0,
                 shouldLog: context.shouldLog,
+                metadata: context.metadata,
               },
               () => originalMethod.apply(this, args),
             );
@@ -169,10 +212,11 @@ export function MeasureClass() {
 /**
  * Wrapper for Isolated Functions: Adjusted with try/catch for error logging
  */
-export function measureFunctionWrapper<
-  T extends (...args: unknown[]) => unknown,
->(fn: T, name?: string): T {
-  return function (this: unknown, ...args: unknown[]) {
+export function measureFunctionWrapper<TThis, TArgs extends unknown[], TReturn>(
+  fn: (this: TThis, ...args: TArgs) => TReturn,
+  name?: string,
+): (this: TThis, ...args: TArgs) => TReturn {
+  return function (this: TThis, ...args: TArgs): TReturn {
     const context = storage.getStore();
     if (!context) return fn.apply(this, args);
 
@@ -190,6 +234,7 @@ export function measureFunctionWrapper<
           durationMS: performance.now() - start,
           depthString: myId,
           error,
+          metadata: context.metadata,
         });
       }
     };
@@ -201,6 +246,7 @@ export function measureFunctionWrapper<
           parentPath: myId,
           childCounter: 0,
           shouldLog: context.shouldLog,
+          metadata: context.metadata,
         },
         () => fn.apply(this, args),
       );
@@ -214,16 +260,16 @@ export function measureFunctionWrapper<
           .catch((error) => {
             logMetric(error);
             throw error;
-          });
+          }) as TReturn;
       }
 
       logMetric(null);
-      return result;
+      return result as TReturn;
     } catch (error) {
       logMetric(error);
       throw error;
     }
-  } as unknown as T;
+  };
 }
 
 /**
@@ -256,6 +302,7 @@ export function measureObjectWrapper<T extends object>(
                 durationMS: performance.now() - start,
                 depthString: myId,
                 error,
+                metadata: context.metadata,
               });
             }
           };
@@ -267,6 +314,7 @@ export function measureObjectWrapper<T extends object>(
                 parentPath: myId,
                 childCounter: 0,
                 shouldLog: context.shouldLog,
+                metadata: context.metadata,
               },
               () => originalWithContext(...args),
             );

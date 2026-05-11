@@ -35,14 +35,13 @@ describe("metrics", () => {
     );
 
     await startTrackingMetrics(
-      "trace-fixed",
+      { traceId: "trace-fixed", sampleRate: 1 },
       async () => {
         const result = await wrapped(1);
 
         expect(result).toBe(2);
         expect(getTraceId()).toBe("trace-fixed");
       },
-      1,
     );
 
     expect(logs).toHaveLength(1);
@@ -52,11 +51,13 @@ describe("metrics", () => {
     expect(logs[0].error).toBeNull();
   });
 
-  it("should generate traceId when not provided", () => {
-    const traceId = startTrackingMetrics(undefined, () => getTraceId(), 1);
+  it("should keep provided traceId", () => {
+    const traceId = startTrackingMetrics(
+      { traceId: "trace-manual", sampleRate: 1 },
+      () => getTraceId(),
+    );
 
-    expect(traceId).toBeTypeOf("string");
-    expect(traceId).toBeTruthy();
+    expect(traceId).toBe("trace-manual");
   });
 
   it("should log error in function wrapper", async () => {
@@ -66,7 +67,10 @@ describe("metrics", () => {
     }, "explode");
 
     await expect(
-      startTrackingMetrics("trace-error", async () => wrapped(), 0),
+      startTrackingMetrics(
+        { traceId: "trace-error", sampleRate: 0 },
+        async () => wrapped(),
+      ),
     ).rejects.toThrow("expected failure");
 
     expect(logs).toHaveLength(1);
@@ -88,9 +92,8 @@ describe("metrics", () => {
     const service = new SampleService();
 
     const result = await startTrackingMetrics(
-      "trace-class",
+      { traceId: "trace-class", sampleRate: 1 },
       async () => service.execute(),
-      1,
     );
 
     expect(result).toBe("ok");
@@ -110,9 +113,8 @@ describe("metrics", () => {
     const wrappedObject = measureObjectWrapper(source, "GatewayClient");
 
     const result = await startTrackingMetrics(
-      "trace-object",
+      { traceId: "trace-object", sampleRate: 1 },
       async () => wrappedObject.ping(5),
-      1,
     );
 
     expect(result).toBe(10);

@@ -14,7 +14,7 @@ npm install @solusyon/metrics
 
 ## Available API
 
-- `startTrackingMetrics(traceId, fn, sampleRate?)`
+- `startTrackingMetrics(config, fn)`
 - `getTraceId()`
 - `setMetricsLogger(loggerBuilder)`
 - `measureFunctionWrapper(fn, name?)`
@@ -36,11 +36,10 @@ const chargePayment = measureFunctionWrapper(async (orderId: string) => {
 }, "chargePayment");
 
 const result = await startTrackingMetrics(
-  "req-123",
+  { traceId: "req-123", sampleRate: 1 },
   async () => {
     return chargePayment("order-1");
   },
-  1,
 );
 
 console.log(result);
@@ -62,14 +61,10 @@ const repository = {
 
 const trackedRepository = measureObjectWrapper(repository, "UserRepository");
 
-await startTrackingMetrics(
-  "req-456",
-  async () => {
-    const user = await trackedRepository.findUser("u-1");
-    await trackedRepository.updateUser(user.id, "New Name");
-  },
-  1,
-);
+await startTrackingMetrics({ traceId: "req-456", sampleRate: 1 }, async () => {
+  const user = await trackedRepository.findUser("u-1");
+  await trackedRepository.updateUser(user.id, "New Name");
+});
 ```
 
 ## Example 3: class with decorator
@@ -87,13 +82,9 @@ MeasureClass()(CheckoutService);
 
 const service = new CheckoutService();
 
-await startTrackingMetrics(
-  "req-789",
-  async () => {
-    await service.createOrder();
-  },
-  1,
-);
+await startTrackingMetrics({ traceId: "req-789", sampleRate: 1 }, async () => {
+  await service.createOrder();
+});
 ```
 
 ## Example 4: custom logger
