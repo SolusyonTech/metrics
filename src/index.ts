@@ -41,9 +41,36 @@ export interface StartTrackingMetricsConfig {
    */
   sampleRate?: number;
   /**
+   * Deterministic sampling interval. When provided, the first tracked execution
+   * in the process is always logged and subsequent logs happen every N calls.
+   * Values are sanitized to an integer >= 1.
+   */
+  sampleInterval?: number;
+  /**
+   * Optional flow key for deterministic interval sampling.
+   * When omitted, a global key is used.
+   */
+  sampleIntervalFlowKey?: string;
+  /**
    * Additional key-value metadata propagated to all metric logs in this trace.
    */
   metadata?: Record<string, unknown>;
+}
+
+const SAMPLE_INTERVAL_DEFAULT_FLOW_KEY = "__global__";
+const sampleIntervalFlowCounters = new Map<string, number>();
+
+function shouldLogByInterval(
+  sampleInterval: number,
+  flowKey?: string,
+): boolean {
+  const sanitizedInterval = Math.max(1, Math.floor(sampleInterval));
+  const resolvedFlowKey = flowKey || SAMPLE_INTERVAL_DEFAULT_FLOW_KEY;
+  const currentFlowCounter =
+    sampleIntervalFlowCounters.get(resolvedFlowKey) || 0;
+  sampleIntervalFlowCounters.set(resolvedFlowKey, currentFlowCounter + 1);
+  const callIndex = currentFlowCounter;
+  return callIndex === 0 || callIndex % sanitizedInterval === 0;
 }
 
 /**
@@ -69,6 +96,73 @@ let currentLogger: LoggerFn = (loggerData) => {
   console.debug(logFormat(loggerData), loggerData.metadata);
 };
 
+const MEASURE_WRAPPED = Symbol("metrics.measure.wrapped");
+
+type ClassMethod = (...args: unknown[]) => unknown;
+
+function resolveRuntimeTarget(
+  declaredTarget: Function,
+  runtimeThis: unknown,
+): Function {
+  if (
+    typeof runtimeThis === "object" &&
+    runtimeThis !== null &&
+    "constructor" in runtimeThis
+  ) {
+    const constructor = (runtimeThis as { constructor?: unknown }).constructor;
+    if (typeof constructor === "function") {
+      return constructor;
+    }
+  }
+
+  return declaredTarget;
+}
+
+function getClassMethodsFromPrototypeChain(prototype: object): Array<{
+  ownerPrototype: object;
+  propertyName: string;
+  descriptor: PropertyDescriptor;
+}> {
+  const methods = new Map<
+    string,
+    { ownerPrototype: object; descriptor: PropertyDescriptor }
+  >();
+  let currentPrototype: object | null = prototype;
+
+  while (currentPrototype && currentPrototype !== Object.prototype) {
+    const ownerPrototype = currentPrototype;
+    const propertyNames = Object.getOwnPropertyNames(currentPrototype);
+
+    propertyNames.forEach((propertyName) => {
+      if (propertyName === "constructor" || methods.has(propertyName)) {
+        return;
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        currentPrototype,
+        propertyName,
+      );
+
+      if (descriptor && typeof descriptor.value === "function") {
+        methods.set(propertyName, {
+          ownerPrototype,
+          descriptor,
+        });
+      }
+    });
+
+    currentPrototype = Object.getPrototypeOf(currentPrototype);
+  }
+
+  return [...methods.entries()].map(
+    ([propertyName, { ownerPrototype, descriptor }]) => ({
+      ownerPrototype,
+      propertyName,
+      descriptor,
+    }),
+  );
+}
+
 function isPromiseLike<T = unknown>(value: unknown): value is Promise<T> {
   return (
     typeof value === "object" &&
@@ -92,10 +186,21 @@ export function startTracking<T>(
   config: StartTrackingMetricsConfig,
   fn: () => T,
 ): T {
-  const { traceId = randomUUID(), sampleRate, metadata } = config;
-  const finalRate = sampleRate ?? DEFAULT_SAMPLE_RATE;
-  const sanitizedRate = Math.max(0.001, Math.min(1, finalRate));
-  const shouldLog = Math.random() <= sanitizedRate;
+  const {
+    traceId = randomUUID(),
+    sampleRate,
+    sampleInterval,
+    sampleIntervalFlowKey,
+    metadata,
+  } = config;
+  const shouldLog =
+    sampleInterval !== undefined
+      ? shouldLogByInterval(sampleInterval, sampleIntervalFlowKey)
+      : (() => {
+          const finalRate = sampleRate ?? DEFAULT_SAMPLE_RATE;
+          const sanitizedRate = Math.max(0.001, Math.min(1, finalRate));
+          return Math.random() <= sanitizedRate;
+        })();
 
   return storage.run(
     { traceId, parentPath: "", childCounter: 0, shouldLog, metadata },
@@ -141,74 +246,90 @@ export function getMetadata(): Record<string, unknown> | undefined {
  */
 export function MeasureClass() {
   return (target: Function) => {
-    const propertyNames = Object.getOwnPropertyNames(target.prototype);
-    propertyNames.forEach((propertyName) => {
-      const descriptor = Object.getOwnPropertyDescriptor(
-        target.prototype,
-        propertyName,
-      );
-      if (
-        propertyName !== "constructor" &&
-        descriptor &&
-        typeof descriptor.value === "function"
+    const methods = getClassMethodsFromPrototypeChain(target.prototype);
+
+    methods.forEach(({ ownerPrototype, propertyName, descriptor }) => {
+      const originalMethod = descriptor.value as ClassMethod & {
+        [MEASURE_WRAPPED]?: boolean;
+      };
+
+      if (originalMethod[MEASURE_WRAPPED]) {
+        return;
+      }
+
+      const wrappedMethod: ClassMethod = function (
+        this: unknown,
+        ...args: unknown[]
       ) {
-        const originalMethod = descriptor.value;
-        descriptor.value = function (...args: unknown[]) {
-          const context = storage.getStore();
-          if (!context) return originalMethod.apply(this, args);
+        const context = storage.getStore();
+        if (!context) return originalMethod.apply(this, args);
 
-          const myOrder = ++context.childCounter;
-          const myId = context.parentPath
-            ? `${context.parentPath}.${myOrder}`
-            : `${myOrder}`;
-          const start = performance.now();
-          const logMetric = (error: unknown | null = null) => {
-            if (context.shouldLog || error) {
-              currentLogger({
-                traceId: context.traceId,
-                target,
-                propertyName,
-                durationMS: performance.now() - start,
-                depthString: myId,
-                error,
-                metadata: context.metadata,
-              });
-            }
-          };
-
-          try {
-            const result = storage.run(
-              {
-                traceId: context.traceId,
-                parentPath: myId,
-                childCounter: 0,
-                shouldLog: context.shouldLog,
-                metadata: context.metadata,
-              },
-              () => originalMethod.apply(this, args),
-            );
-
-            if (isPromiseLike(result)) {
-              return result
-                .then((value) => {
-                  logMetric(null);
-                  return value;
-                })
-                .catch((error) => {
-                  logMetric(error);
-                  throw error;
-                });
-            }
-
-            logMetric(null);
-            return result;
-          } catch (error) {
-            logMetric(error);
-            throw error;
+        const myOrder = ++context.childCounter;
+        const myId = context.parentPath
+          ? `${context.parentPath}.${myOrder}`
+          : `${myOrder}`;
+        const start = performance.now();
+        const logMetric = (error: unknown | null = null) => {
+          if (context.shouldLog || error) {
+            currentLogger({
+              traceId: context.traceId,
+              target: resolveRuntimeTarget(target, this),
+              propertyName,
+              durationMS: performance.now() - start,
+              depthString: myId,
+              error,
+              metadata: context.metadata,
+            });
           }
         };
-        Object.defineProperty(target.prototype, propertyName, descriptor);
-      }
+
+        try {
+          const result = storage.run(
+            {
+              traceId: context.traceId,
+              parentPath: myId,
+              childCounter: 0,
+              shouldLog: context.shouldLog,
+              metadata: context.metadata,
+            },
+            () => originalMethod.apply(this, args),
+          );
+
+          if (isPromiseLike(result)) {
+            return result
+              .then((value) => {
+                logMetric(null);
+                return value;
+              })
+              .catch((error) => {
+                logMetric(error);
+                throw error;
+              });
+          }
+
+          logMetric(null);
+          return result;
+        } catch (error) {
+          logMetric(error);
+          throw error;
+        }
+      };
+
+      (wrappedMethod as ClassMethod & { [MEASURE_WRAPPED]?: boolean })[
+        MEASURE_WRAPPED
+      ] = true;
+
+      const ownDescriptor = Object.getOwnPropertyDescriptor(
+        ownerPrototype,
+        propertyName,
+      );
+
+      Object.defineProperty(ownerPrototype, propertyName, {
+        configurable: ownDescriptor?.configurable ?? descriptor.configurable,
+        enumerable: ownDescriptor?.enumerable ?? descriptor.enumerable,
+        writable: ownDescriptor?.writable ?? descriptor.writable ?? true,
+        value: wrappedMethod,
+      });
     });
   };
 }

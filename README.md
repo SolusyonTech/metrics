@@ -2,6 +2,13 @@
 
 TypeScript library for execution tracking with traceId, execution time, and error capture.
 
+## Highlights in v0.3.0
+
+- Adds deterministic interval sampling with `sampleInterval`.
+- Adds per-flow interval sampling with `sampleIntervalFlowKey`.
+- Improves `MeasureClass()` to instrument methods found in prototype chains (inherited methods).
+- Improves target resolution in logs to prefer runtime class when available.
+
 ## Runtime requirements
 
 - Node.js `20` or higher
@@ -115,7 +122,36 @@ await startTracking(
 );
 ```
 
-## Example 5: custom logger
+## Example 5: deterministic interval sampling
+
+```ts
+import { MeasureClass, startTracking } from "@solusyon/metrics";
+
+class PaymentService {
+  execute(value: number) {
+    return value;
+  }
+}
+
+MeasureClass()(PaymentService);
+const service = new PaymentService();
+
+for (let i = 1; i <= 5; i++) {
+  await startTracking(
+    {
+      traceId: `trace-${i}`,
+      sampleRate: 0,
+      sampleInterval: 2,
+      sampleIntervalFlowKey: "pix-out",
+    },
+    () => service.execute(i),
+  );
+}
+
+// Logs for i = 1, 3, 5
+```
+
+## Example 6: custom logger
 
 ```ts
 import { setMetricsLogger } from "@solusyon/metrics";
@@ -132,9 +168,18 @@ setMetricsLogger((format) => {
 ## How sampling works
 
 - `sampleRate` ranges from `0` to `1` and is internally limited to the range `0.001` to `1`.
+- When `sampleInterval` is provided, interval sampling takes precedence over `sampleRate`.
+- Interval sampling always logs the first execution per flow key, then every N calls.
+- `sampleIntervalFlowKey` lets you keep independent counters per business flow (for example, per route or operation).
 - If `sampleRate` is not provided, the library uses the `METRICS_SAMPLE_RATE` environment variable.
 - If the variable does not exist, the current default is `1`.
 - If `traceId` is omitted in `startTracking`, the library generates one with `randomUUID()`.
+
+## MeasureClass behavior
+
+- Instruments own and inherited methods from the prototype chain.
+- Avoids double wrapping of methods already instrumented.
+- For inherited methods, runtime target names in logs reflect the class of `this` when possible.
 
 ## Scripts
 

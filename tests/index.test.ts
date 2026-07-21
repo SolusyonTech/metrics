@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-    MeasureClass,
-    getTraceId,
-    measureFunctionWrapper,
-    measureObjectWrapper,
-    setMetricsLogger,
-    startTracking,
+  MeasureClass,
+  getTraceId,
+  measureFunctionWrapper,
+  measureObjectWrapper,
+  setMetricsLogger,
+  startTracking,
 } from "../src/index";
 
 type LoggedMetric = {
@@ -26,6 +26,76 @@ describe("metrics", () => {
     setMetricsLogger(() => (loggerData) => {
       logs.push(loggerData as LoggedMetric);
     });
+  });
+
+  it("should log first call and then follow sampleInterval", async () => {
+    class IntervalSampleService {
+      execute(value: number): number {
+        return value;
+      }
+    }
+
+    MeasureClass()(IntervalSampleService);
+    const service = new IntervalSampleService();
+
+    for (let i = 1; i <= 5; i++) {
+      await startTracking(
+        {
+          traceId: `trace-interval-${i}`,
+          sampleRate: 0,
+          sampleInterval: 2,
+        },
+        () => service.execute(i),
+      );
+    }
+
+    expect(logs).toHaveLength(3);
+    expect(logs[0].traceId).toBe("trace-interval-1");
+    expect(logs[1].traceId).toBe("trace-interval-3");
+    expect(logs[2].traceId).toBe("trace-interval-5");
+  });
+
+  it("should always log first call of each flow when using sampleInterval", async () => {
+    class IntervalSampleService {
+      execute(value: number): number {
+        return value;
+      }
+    }
+
+    MeasureClass()(IntervalSampleService);
+    const service = new IntervalSampleService();
+
+    for (let i = 1; i <= 10; i++) {
+      await startTracking(
+        {
+          traceId: `trace-flow-a-${i}`,
+          sampleInterval: 100,
+          sampleIntervalFlowKey: "flow-a",
+        },
+        () => service.execute(i),
+      );
+    }
+
+    await startTracking(
+      {
+        traceId: "trace-flow-b-1",
+        sampleInterval: 100,
+        sampleIntervalFlowKey: "flow-b",
+      },
+      () => service.execute(999),
+    );
+
+    const flowALogs = logs.filter((log) =>
+      log.traceId.startsWith("trace-flow-a-"),
+    );
+    const flowBLogs = logs.filter((log) =>
+      log.traceId.startsWith("trace-flow-b-"),
+    );
+
+    expect(flowALogs).toHaveLength(1);
+    expect(flowALogs[0].traceId).toBe("trace-flow-a-1");
+    expect(flowBLogs).toHaveLength(1);
+    expect(flowBLogs[0].traceId).toBe("trace-flow-b-1");
   });
 
   it("should keep the reported traceId in context", async () => {
@@ -97,6 +167,54 @@ describe("metrics", () => {
     expect(logs[0].traceId).toBe("trace-class");
     expect(logs[0].propertyName).toBe("execute");
     expect(logs[0].target.name).toBe("SampleService");
+  });
+
+  it("should measure inherited class methods with decorator", async () => {
+    class BaseRepository {
+      async save(value: number): Promise<number> {
+        return value;
+      }
+    }
+
+    class ChildRepository extends BaseRepository {}
+
+    MeasureClass()(ChildRepository);
+    const repository = new ChildRepository();
+
+    const result = await startTracking(
+      { traceId: "trace-class-inherited", sampleRate: 1 },
+      async () => repository.save(10),
+    );
+
+    expect(result).toBe(10);
+    expect(logs).toHaveLength(1);
+    expect(logs[0].traceId).toBe("trace-class-inherited");
+    expect(logs[0].propertyName).toBe("save");
+    expect(logs[0].target.name).toBe("ChildRepository");
+  });
+
+  it("should instrument base prototype methods used by base instances", async () => {
+    class BaseRepository {
+      async save(value: number): Promise<number> {
+        return value;
+      }
+    }
+
+    class GenericEntityRepository extends BaseRepository {}
+
+    MeasureClass()(GenericEntityRepository);
+    const baseRepository = new BaseRepository();
+
+    const result = await startTracking(
+      { traceId: "trace-base-instance", sampleRate: 1 },
+      async () => baseRepository.save(7),
+    );
+
+    expect(result).toBe(7);
+    expect(logs).toHaveLength(1);
+    expect(logs[0].traceId).toBe("trace-base-instance");
+    expect(logs[0].propertyName).toBe("save");
+    expect(logs[0].target.name).toBe("BaseRepository");
   });
 
   it("should measure object methods with proxy", async () => {
